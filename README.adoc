@@ -1,0 +1,100 @@
+= Bases de Datos 1 : Trabajo Practico  Centro Atencion Telefónica
+
+== Introduccion
+
+El sistema creado, CAT (Centro de Atencion Telefónica) administra la cola de espera de 
+llamados recibidos, la atencion de los operadores a los llamados, así como el alta y cierre
+de trámites. Al mismo tiempo, mantiene la informacion actualizada de clientes y operadores.
+Los clientes son informados mediante email cuando ocurre un alta o cierre del trámite que tienen en gestión.
+Por último, tambien se mantiene en tiempo real, la info sumarizada de la durecion promedio, total, y 
+cantidad de llamados atendidos por cada operador.
+
+== Descripcion
+
+	-  *Dificultades encontradas*
+		* Punto 2.4, Eliminar PK y FK: Al querer eliminar tanto las primary keys como las foreigns key, lanzó un error 
+		  porque, al prinicipio queremos eliminar las pk antes que las fk, lo cual es incorrecto, pues hay determinadas pk que son fk
+		  en otras tablas, como por ejemplo id_cliente es pk en cliente pero FK en cola_atencion
+
+	 	* Error en actualizar rendimiento de operador: No tuvimos en cuenta al principio que cuando un llamado es desistido, pues podria
+		  pasar que ningun operador haya atendido el llamado (ya que el cliente corta antes la llamada) entonces lanzaba error. Se corrigió
+		  simplemente agregando que si el operadore es null (is null) entonces retorna el trigger sin cambios, lo que permite continuar con la
+		  ejecucion.
+
+		* Problemas con nulls en el pasaje a boltDB: Al momento de querer pasar los datos a bolt tuvimos dificultades ya que hay ciertas tablas
+		  (como las colas de atencion) que podían o no tener ciertos datos, esto quiere decir, que habia presencia de datos del tipo null.
+		  Esto generó un problema ya que al usar el "scan" no tuvimos en cuenta que esta funcion fallaba al querer asignar nulos a variables
+		  las cuales estaban definidas para otros tipos de datos (como ints, strings, etc). Finalmente, la solución fue el uso de tipos de datos
+		  proporsionados por la librería de sql, como el NullInt64 o el NullString, los cuales permiten almacenar tanto sus respectivos valores
+		  como nulls.
+
+		* Simular sumatoria de atenciones en rendimiento_operadore: al principio se utilizo un pg_sleep(1) en cada iteración del for del sp
+		  iniciar-pruebas. Sin embargo, pg_sleep no modifica el tiempo en now(), por lo que para poder hacer que los tiempos sean distintos, 
+		  cuando se asigna f_fin_atecion en finalizar-llamado y desistir-llamado, se suma un interval random que va de 0 a 100 minutos extra.
+		  De esta forma, pudimos comprobar que la sumatoria, calculo de promedios, y tiempos totales de duracion se suman correctamente.  
+
+
+== Implementacion
+	- *Archivos-sql*
+		Aca se encuentran los bloques de codigo escritos en el lenguaje PL/pgsql para el funcionamiento de las tablas,
+		Stored Procedures, Triggers y las claves.
+			* *Agregar claves*
+				Transforma algunos de los atributos de las tablas en primary keys y en foreign keys.
+			* *Alta-tramite*
+				Stored procedure que consiste en insertar una fila en la tabla tramite que contenga información sobre la llamda realizada
+				por un cliente, dejandolo como iniciado. 
+			* *asignar-operadore-a-llamado.sql*
+				Stored procedure que consiste en poner a un operador a cargo de una llamada en espera, en las tablas, el operador
+				seleccionado estará ocupado y la llama(o atención) estará en linea.
+			* *berini_carmona_faccini_flores_db1.sql*
+				Crea la base de datos del sistema.
+			* *cierre-tramite.sql*
+				Stored procedure que consiste en actualizar la fila de un tramite que ya fue iniciado para agregarle los datos
+				que notifican su cierre.
+			* *clientes.sql*
+				Contiene los clientes que se insertan en la tabla de clientes
+	    	* *datos-prueba.sql*
+				Contiene los datos que se utilizan para probar los bloques de codigo que están siendo mencionados.
+			* *desistir-llamado.sql*
+				Stored procedure que consiste en actualizar la fila de un llamado cuando se desiste una llamada.
+			* *eliminar-claves.sql*
+				Le quita la característica de ser primary key o foreign key a los atributos que fueron anteriormente elegidos para ser clave.
+			* *envio-mail-alta-tramite.sql*
+				Trigger que consiste en crear una fila en la tabla envio_mail cada vez que se crea una fila en la tabla tramite.
+			* *envio-mail-cierre-tramite.sql*
+				Trigger que consiste en crear una fila en la tabla envio_mail cada vez que se actualiza una fila en la tabla tramite para su cierre.
+			* *finalizacion-llamado.sql*
+				Stored procedure que consiste en actualizar un llamado cuando esta finaliza despues de que el cliente haya sido atendido.
+			* *ingreso-llamado.sql*
+				Stored procedure que consiste en insertar una fila en la cola_atencion cuando se inicia una llamada. 
+			* *iniciar-pruebas.sql*
+				Recorre las filas de los datos de prueba y activa los SP para probarlos. 
+			* *operadore.sql*
+				Contiene los operadores que se insertan en la tabla de operadores.
+			* *reporte-rend-operadores.sql*
+				Trigger que consiste en actualizar o crear(si es que no existía antes) una fila de la tabla rendimiento_operadore cada vez que finaliza 
+				o desiste un llamado.
+			* *tablas.sql*
+				Crea las tablas necesarias para el sistema.
+	- *menu.go*
+		Este bloque de código genera la interfaz que contiene el menú de opciones para generar las tablas, claves, SP/triggers, 
+		los datos, iniciar las pruebas y crear los datos para BoltDB.
+			* Para lograr que este menu interactuara con la base de datos, decidimos hacer uso de funciones que lean los diferentes archivos y los ejecuten
+			cuando corresponda según las elecciones del usuario.
+			Esto se realiza con la funcion ReadFile de io/ioutil de go. Luego, para ejecutar cada scriptSQL, usamos la funcion Exec, que ejecuta código sql
+			siempre y cuando no se devuelvan filas (como un select que muestre filas por pantalla, por ejemplo). Cada vez que queremos cargar o tablas, pk/fk, sp, triggers o iniciar-pruebas,
+			debemos abrir conexion con nuestra base de datos creada con nuestros apellidos.
+			Un punto a considerar es que en para efectivamente iniciar-pruebas se utiliza select, pues como se mostró en las diapositivas dadas en la clase de sp,
+			se puede ejecutar con select, y como igualmente no necesitamos que muestre filas (ya que luego podremos acceder a la db creada), es válido utilizar select en ese caso.
+			* La base de datos de boltDB fue generada en su totalidad en go, para esto usamos las funciones enseñadas durante la cursada de CreateUpdate()
+			para generar cambios en la base de datos en bolt y la función ReadUnique() la cual no se usa para esta implementación pero es de suma utilidad en
+			implementaciones posteriores al momento de necesitar leer información. Esta base de datos representa en bolt la base de datos generada en postgres,
+			las tablas representadas son la de clientes, la de operadores, la de la cola de atención y la de tramites. Para este fin, se implementaron funciones
+			capaces de escanear el contenido de una tabla, convetirlo a formato JSON y, posteriormente, cargar estos datos en boltDB.
+
+== Conclusiones
+La elaboración de este sistema de gestión para el Centro de Atención Telefónica (CAT) de Skynet representó un desafío significativo,
+requiriendo un diseño cuidadoso para garantizar la integración de tablas, procedimientos almacenados, triggers y claves primarias.
+A pesar de estos retos, el resultado es un código robusto y funcional que automatiza procesos críticos y mejora la experiencia del usuario final.
+Este proyecto refleja el esfuerzo invertido en cada etapa, desde la planificación hasta la implementación, garantizando un sistema eficiente y 
+preparado para las necesidades actuales y futuras del CAT.

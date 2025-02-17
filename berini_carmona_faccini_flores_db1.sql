@@ -1,0 +1,2 @@
+drop database berini_carmona_faccini_flores_db1 if exists;
+create database berini_carmona_faccini_flores_db1;
